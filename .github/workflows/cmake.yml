@@ -1,0 +1,70 @@
+name: CMake
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  # Build the pybind11 module and run the python smoke test on all 3 OSes.
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Ensure a full Python (with dev headers / libraries) is available
+    # so that pybind11 can compile against it on every OS.
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Configure CMake
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          PY="$pythonLocation/python.exe"
+        else
+          PY="$pythonLocation/bin/python"
+        fi
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DPYTHON_EXECUTABLE="$PY" \
+          -DPython3_EXECUTABLE="$PY" \
+          -DPYTHON_LIBRARY_DIR=pythonlib
+
+    - name: Build
+      # Build your program with the given configuration
+      run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel 2
+
+    - name: Collect python module
+      shell: bash
+      run: |
+        MOD=$(find build -maxdepth 4 \( -name "automobile*.so" -o -name "automobile*.pyd" \) ! -path "*_deps*" | head -n 1)
+        if [ -z "$MOD" ]; then
+          echo "::error::automobile module not found in build tree"
+          exit 1
+        fi
+        mkdir -p python_stage
+        cp "$MOD" python_stage/
+
+    - name: Test with python
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          PY="$pythonLocation/python.exe"
+        else
+          PY="$pythonLocation/bin/python"
+        fi
+        cd tests
+        PYTHONPATH="$PWD/../python_stage" "$PY" test.py
